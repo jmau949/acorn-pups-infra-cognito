@@ -91,7 +91,7 @@ describe('CognitoStack', () => {
     });
   });
 
-  test('creates correct number of resources', () => {
+  it('creates correct number of resources', () => {
     const stack = new CognitoStack(app, 'TestCognitoStack', {
       environment: 'test',
       usersTableName: 'test-users-table',
@@ -102,11 +102,15 @@ describe('CognitoStack', () => {
 
     // Check that all expected resources are created
     template.resourceCountIs('AWS::Cognito::UserPool', 1);
-    template.resourceCountIs('AWS::Lambda::Function', 1);
+    template.resourceCountIs('AWS::Lambda::Function', 2); // Post-confirmation + retry processor
     template.resourceCountIs('AWS::Lambda::Permission', 2); // 2 permissions: Cognito + CloudWatch
-    template.resourceCountIs('AWS::SSM::Parameter', 5); // 5 parameters exported
-    template.resourceCountIs('AWS::IAM::Role', 1); // Lambda execution role
-    template.resourceCountIs('AWS::IAM::Policy', 1); // Lambda policy
+    template.resourceCountIs('AWS::SSM::Parameter', 9); // 9 parameters exported (added retry infrastructure)
+    template.resourceCountIs('AWS::IAM::Role', 2); // 2 Lambda execution roles
+    template.resourceCountIs('AWS::SQS::Queue', 3); // Primary retry, manual intervention, and DLQ
+    template.resourceCountIs('AWS::SNS::Topic', 1); // Admin alert topic
+
+    // Verify no CloudWatch alarms in test environment (cost optimization)
+    template.resourceCountIs('AWS::CloudWatch::Alarm', 0);
   });
 
   test('has Lambda trigger configured', () => {

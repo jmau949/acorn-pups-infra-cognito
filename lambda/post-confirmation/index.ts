@@ -192,10 +192,16 @@ async function sendToRetryQueue(
 }
 
 /**
- * Publish metrics with error handling
+ * Publish metrics with error handling and cost optimization
  */
 async function publishMetric(metricName: string, value: number, dimensions?: Record<string, string>): Promise<void> {
   try {
+    // Skip metrics in non-production environments to reduce costs
+    if (process.env.NODE_ENV !== 'prod') {
+      console.log(`Skipping metric ${metricName} in ${process.env.NODE_ENV} environment`);
+      return;
+    }
+
     const metricData: any = {
       MetricName: metricName,
       Value: value,

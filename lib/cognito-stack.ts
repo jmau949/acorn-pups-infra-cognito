@@ -80,13 +80,15 @@ export class CognitoStack extends cdk.Stack {
       props.usersTableArn
     );
 
-    // Create Lambda function
+    // Create Lambda function with optimized settings
     const postConfirmationLambda = new lambda.Function(this, 'PostConfirmationLambda', {
       functionName: lambdaConfig.functionName,
       runtime: lambdaConfig.runtime,
       handler: 'index.handler',
       code: lambda.Code.fromAsset('lambda/post-confirmation'),
       timeout: lambdaConfig.timeout,
+      memorySize: props.environment === 'prod' ? 256 : 128, // Environment-specific memory
+      reservedConcurrentExecutions: props.environment === 'prod' ? 20 : 5, // Limit concurrency
       environment: {
         USERS_TABLE_NAME: props.usersTableName,
         NODE_ENV: props.environment,
@@ -116,6 +118,11 @@ export class CognitoStack extends cdk.Stack {
         resources: [`arn:aws:logs:${this.region}:${this.account}:log-group:/aws/lambda/${lambdaConfig.functionName}:*`],
       })
     );
+
+    // Configure log retention based on environment
+    if (props.environment === 'prod') {
+      postConfirmationLambda.logGroup.applyRemovalPolicy(cdk.RemovalPolicy.RETAIN);
+    }
 
     // Add CloudWatch Metrics permissions
     postConfirmationLambda.addToRolePolicy(
@@ -150,16 +157,16 @@ export class CognitoStack extends cdk.Stack {
   }
 
   private createPrimaryRetryQueue(): sqs.Queue {
-    // Dead letter queue for primary retry queue
+    // Dead letter queue for primary retry queue - optimized retention
     const primaryRetryDlq = new sqs.Queue(this, 'PrimaryRetryDLQ', {
       queueName: `acorn-pups-${this.environmentName}-primary-retry-dlq`,
-      retentionPeriod: cdk.Duration.days(14),
+      retentionPeriod: this.environmentName === 'prod' ? cdk.Duration.days(7) : cdk.Duration.days(3),
     });
 
     return new sqs.Queue(this, 'PrimaryRetryQueue', {
       queueName: `acorn-pups-${this.environmentName}-primary-retry`,
-      visibilityTimeout: cdk.Duration.minutes(5), // Match Lambda timeout + buffer
-      retentionPeriod: cdk.Duration.days(7),
+      visibilityTimeout: cdk.Duration.minutes(2), // Optimized timeout
+      retentionPeriod: this.environmentName === 'prod' ? cdk.Duration.days(2) : cdk.Duration.days(1),
       receiveMessageWaitTime: cdk.Duration.seconds(20), // Long polling
       deadLetterQueue: {
         queue: primaryRetryDlq,
@@ -172,7 +179,7 @@ export class CognitoStack extends cdk.Stack {
     return new sqs.Queue(this, 'ManualInterventionQueue', {
       queueName: `acorn-pups-${this.environmentName}-manual-intervention`,
       visibilityTimeout: cdk.Duration.hours(1), // Manual processing takes time
-      retentionPeriod: cdk.Duration.days(14), // Keep for longer review
+      retentionPeriod: this.environmentName === 'prod' ? cdk.Duration.days(7) : cdk.Duration.days(3),
       receiveMessageWaitTime: cdk.Duration.seconds(20),
     });
   }
@@ -183,14 +190,16 @@ export class CognitoStack extends cdk.Stack {
       runtime: lambda.Runtime.NODEJS_18_X,
       handler: 'index.handler',
       code: lambda.Code.fromAsset('lambda/retry-processor'),
-      timeout: cdk.Duration.minutes(5),
+      timeout: cdk.Duration.minutes(props.environment === 'prod' ? 2 : 1), // Optimized timeout
+      memorySize: props.environment === 'prod' ? 256 : 128, // Environment-specific memory
+      reservedConcurrentExecutions: props.environment === 'prod' ? 10 : 2, // Limit concurrency
       environment: {
         USERS_TABLE_NAME: props.usersTableName,
         NODE_ENV: props.environment,
         PRIMARY_RETRY_QUEUE_URL: this.primaryRetryQueue.queueUrl,
         MANUAL_INTERVENTION_QUEUE_URL: this.manualInterventionQueue.queueUrl,
         ADMIN_ALERT_TOPIC_ARN: this.adminAlertTopic.topicArn,
-        MAX_RETRY_ATTEMPTS: '3',
+        MAX_RETRY_ATTEMPTS: props.environment === 'prod' ? '3' : '2', // Fewer retries in dev
       },
       description: `Retry processor Lambda for failed user creation operations - ${props.environment}`,
     });
@@ -240,17 +249,23 @@ export class CognitoStack extends cdk.Stack {
       })
     );
 
-    // Add SQS event source
+    // Add SQS event source with optimized settings
     retryLambda.addEventSource(new lambdaEventSources.SqsEventSource(this.primaryRetryQueue, {
-      batchSize: 10,
-      maxBatchingWindow: cdk.Duration.seconds(30),
+      batchSize: props.environment === 'prod' ? 5 : 1, // Optimized batch size
+      maxBatchingWindow: cdk.Duration.seconds(10), // Reduced latency
     }));
 
     return retryLambda;
   }
 
   private createMonitoringAndAlarms(): void {
-    // Create CloudWatch alarms for monitoring
+    // Only create alarms for production environment to reduce costs
+    if (this.environmentName !== 'prod') {
+      console.log(`Skipping CloudWatch alarms for ${this.environmentName} environment to reduce costs`);
+      return;
+    }
+
+    // Create CloudWatch alarms for monitoring (production only)
     
     // Alarm for manual intervention queue depth
     new cloudwatch.Alarm(this, 'ManualInterventionQueueDepthAlarm', {
@@ -274,7 +289,7 @@ export class CognitoStack extends cdk.Stack {
       }),
     });
 
-    // Alarm for high retry queue depth
+    // Alarm for high retry queue depth - increased threshold for cost optimization
     new cloudwatch.Alarm(this, 'RetryQueueDepthAlarm', {
       alarmName: `acorn-pups-${this.environmentName}-retry-queue-depth`,
       alarmDescription: 'Primary retry queue has high depth indicating processing issues',
@@ -285,10 +300,10 @@ export class CognitoStack extends cdk.Stack {
           QueueName: this.primaryRetryQueue.queueName,
         },
         statistic: 'Average',
-        period: cdk.Duration.minutes(5),
+        period: cdk.Duration.minutes(10), // Longer period to reduce alarm evaluations
       }),
-      threshold: 50,
-      evaluationPeriods: 2,
+      threshold: 100, // Higher threshold to reduce false alarms
+      evaluationPeriods: 3, // More periods before triggering
       comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
     }).addAlarmAction({
       bind: () => ({
@@ -296,12 +311,14 @@ export class CognitoStack extends cdk.Stack {
       }),
     });
 
-    // Alarm for Lambda errors
+    // Alarm for Lambda errors - higher threshold to reduce noise
     new cloudwatch.Alarm(this, 'RetryLambdaErrorAlarm', {
       alarmName: `acorn-pups-${this.environmentName}-retry-lambda-errors`,
       alarmDescription: 'Retry processor Lambda is experiencing errors',
-      metric: this.retryProcessorLambda.metricErrors(),
-      threshold: 5,
+      metric: this.retryProcessorLambda.metricErrors({
+        period: cdk.Duration.minutes(10), // Longer period
+      }),
+      threshold: 10, // Higher threshold
       evaluationPeriods: 2,
       comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
     }).addAlarmAction({
@@ -310,7 +327,7 @@ export class CognitoStack extends cdk.Stack {
       }),
     });
 
-    // Custom metric alarm for user creation failures
+    // Custom metric alarm for user creation failures - higher threshold
     new cloudwatch.Alarm(this, 'UserCreationFailureAlarm', {
       alarmName: `acorn-pups-${this.environmentName}-user-creation-failures`,
       alarmDescription: 'High rate of user creation failures detected',
@@ -318,9 +335,9 @@ export class CognitoStack extends cdk.Stack {
         namespace: 'AcornPups/UserRegistration',
         metricName: 'UserCreationImmediateFailure',
         statistic: 'Sum',
-        period: cdk.Duration.minutes(5),
+        period: cdk.Duration.minutes(10), // Longer period
       }),
-      threshold: 10,
+      threshold: 25, // Higher threshold to reduce false alarms
       evaluationPeriods: 2,
       comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,

@@ -43,8 +43,10 @@ export const handler: SQSHandler = async (event: SQSEvent) => {
   
   console.log(`Retry processing complete: ${successful} successful, ${failed} failed`);
 
-  // Publish batch metrics
-  await publishBatchMetrics(successful, failed);
+  // Publish batch metrics only if there are meaningful results
+  if (successful > 0 || failed > 0) {
+    await publishBatchMetrics(successful, failed);
+  }
 };
 
 async function processRetryRecord(record: any): Promise<void> {
@@ -66,8 +68,8 @@ async function processRetryRecord(record: any): Promise<void> {
       AttemptCount: payload.attemptCount.toString(),
     });
 
-    // Send success notification if this was a recovery after multiple failures
-    if (payload.attemptCount > 1) {
+    // Send success notification if this was a recovery after multiple failures (production only)
+    if (payload.attemptCount > 1 && process.env.NODE_ENV === 'prod') {
       await sendAdminAlert(
         'User Creation Retry Success',
         `User creation succeeded on retry attempt ${payload.attemptCount} for user ${payload.userRecord.user_id}. Original failure time: ${payload.firstAttemptTimestamp}`
@@ -129,31 +131,41 @@ async function handleRetryFailure(record: any, error: Error): Promise<void> {
       // Track manual intervention needed
       await publishMetric('UserCreationManualInterventionRequired', 1);
 
-      // Send admin alert
-      await sendAdminAlert(
-        'User Creation Requires Manual Intervention',
-        `User creation failed after ${MAX_RETRY_ATTEMPTS} retry attempts for user ${payload.userRecord.user_id}. 
-        Original attempt: ${payload.firstAttemptTimestamp}
-        Final error: ${error.message}
-        
-        Please check the manual intervention queue for details.`
-      );
+      // Send admin alert (production only for cost optimization)
+      if (process.env.NODE_ENV === 'prod') {
+        await sendAdminAlert(
+          'User Creation Requires Manual Intervention',
+          `User creation failed after ${MAX_RETRY_ATTEMPTS} retry attempts for user ${payload.userRecord.user_id}. 
+          Original attempt: ${payload.firstAttemptTimestamp}
+          Final error: ${error.message}
+          
+          Please check the manual intervention queue for details.`
+        );
+      }
     }
 
   } catch (handlingError) {
     console.error('Error handling retry failure:', handlingError);
-    // Even the error handling failed - this is a critical issue
-    await sendAdminAlert(
-      'Critical: Retry Failure Handling Error',
-      `Failed to handle retry failure properly. This requires immediate attention.
-      Original error: ${error.message}
-      Handling error: ${(handlingError as Error).message}`
-    );
+    // Even the error handling failed - this is a critical issue (production only)
+    if (process.env.NODE_ENV === 'prod') {
+      await sendAdminAlert(
+        'Critical: Retry Failure Handling Error',
+        `Failed to handle retry failure properly. This requires immediate attention.
+        Original error: ${error.message}
+        Handling error: ${(handlingError as Error).message}`
+      );
+    }
   }
 }
 
 async function publishMetric(metricName: string, value: number, dimensions?: Record<string, string>): Promise<void> {
   try {
+    // Skip metrics in non-production environments to reduce costs
+    if (process.env.NODE_ENV !== 'prod') {
+      console.log(`Skipping metric ${metricName} in ${process.env.NODE_ENV} environment`);
+      return;
+    }
+
     const metricData: any = {
       MetricName: metricName,
       Value: value,
@@ -176,23 +188,39 @@ async function publishMetric(metricName: string, value: number, dimensions?: Rec
 
 async function publishBatchMetrics(successful: number, failed: number): Promise<void> {
   try {
-    await cloudwatch.send(new PutMetricDataCommand({
-      Namespace: 'AcornPups/UserRegistration',
-      MetricData: [
-        {
-          MetricName: 'RetryBatchSuccessful',
-          Value: successful,
-          Unit: 'Count',
-          Timestamp: new Date(),
-        },
-        {
-          MetricName: 'RetryBatchFailed',
-          Value: failed,
-          Unit: 'Count',
-          Timestamp: new Date(),
-        },
-      ],
-    }));
+    // Skip metrics in non-production environments to reduce costs
+    if (process.env.NODE_ENV !== 'prod') {
+      console.log(`Skipping batch metrics in ${process.env.NODE_ENV} environment`);
+      return;
+    }
+
+    // Only publish metrics if there are meaningful values
+    const metricData: any[] = [];
+    
+    if (successful > 0) {
+      metricData.push({
+        MetricName: 'RetryBatchSuccessful',
+        Value: successful,
+        Unit: 'Count',
+        Timestamp: new Date(),
+      });
+    }
+    
+    if (failed > 0) {
+      metricData.push({
+        MetricName: 'RetryBatchFailed',
+        Value: failed,
+        Unit: 'Count',
+        Timestamp: new Date(),
+      });
+    }
+
+    if (metricData.length > 0) {
+      await cloudwatch.send(new PutMetricDataCommand({
+        Namespace: 'AcornPups/UserRegistration',
+        MetricData: metricData,
+      }));
+    }
   } catch (error) {
     console.error('Failed to publish batch metrics:', error);
   }
