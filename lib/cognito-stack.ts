@@ -97,6 +97,17 @@ export class CognitoStack extends cdk.Stack {
       })
     );
 
+    // Add CloudWatch Metrics permissions
+    postConfirmationLambda.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: [
+          'cloudwatch:PutMetricData',
+        ],
+        resources: ['*'], // CloudWatch metrics don't support resource-level permissions
+      })
+    );
+
     return postConfirmationLambda;
   }
 

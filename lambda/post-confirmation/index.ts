@@ -1,8 +1,13 @@
 import { PostConfirmationTriggerEvent, PostConfirmationTriggerHandler } from 'aws-lambda';
-import { DynamoDB } from 'aws-sdk';
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
+import { CloudWatchClient, PutMetricDataCommand } from '@aws-sdk/client-cloudwatch';
+import { randomUUID } from 'crypto';
 
-// Initialize DynamoDB client
-const dynamoDb = new DynamoDB.DocumentClient();
+// Initialize AWS clients
+const dynamoDbClient = new DynamoDBClient({});
+const dynamoDb = DynamoDBDocumentClient.from(dynamoDbClient);
+const cloudwatch = new CloudWatchClient({});
 
 /**
  * Post-confirmation Lambda handler for Cognito User Pool
@@ -25,10 +30,11 @@ export const handler: PostConfirmationTriggerHandler = async (event: PostConfirm
       throw new Error('USERS_TABLE_NAME environment variable is not set');
     }
 
-    // Generate user ID (using timestamp + random string for uniqueness)
-    const timestamp = Date.now().toString();
-    const randomString = Math.random().toString(36).substring(2, 15);
-    const userId = `usr_${timestamp}_${randomString}`;
+    // Generate user ID using crypto.randomUUID for better uniqueness
+    const userId = `usr_${randomUUID()}`;
+
+    // Generate ISO date string once and reuse
+    const currentTimestamp = new Date().toISOString();
 
     // Create user record in DynamoDB
     const userRecord = {
@@ -39,9 +45,9 @@ export const handler: PostConfirmationTriggerHandler = async (event: PostConfirm
       cognito_sub: cognitoSub,
       full_name: userAttributes.name || userAttributes.email,
       phone: userAttributes.phone_number || null,
-      timezone: 'America/New_York', // Default timezone
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      timezone: 'America/Los_Angeles', // Default to Pacific timezone
+      created_at: currentTimestamp,
+      updated_at: currentTimestamp,
       last_login: null,
       is_active: true,
       push_notifications: true,
@@ -52,14 +58,25 @@ export const handler: PostConfirmationTriggerHandler = async (event: PostConfirm
 
     console.log('Creating user record:', JSON.stringify(userRecord, null, 2));
 
-    // Put item in DynamoDB
-    await dynamoDb.put({
+    // Put item in DynamoDB using AWS SDK v3
+    await dynamoDb.send(new PutCommand({
       TableName: usersTableName,
       Item: userRecord,
       ConditionExpression: 'attribute_not_exists(PK)', // Ensure we don't overwrite existing records
-    }).promise();
+    }));
 
     console.log(`Successfully created user record for user: ${userId}`);
+
+    // Add custom metrics for monitoring
+    await cloudwatch.send(new PutMetricDataCommand({
+      Namespace: 'AcornPups/UserRegistration',
+      MetricData: [{
+        MetricName: 'UserCreationSuccess',
+        Value: 1,
+        Unit: 'Count',
+        Timestamp: new Date(),
+      }]
+    }));
 
     // Return the event unchanged (required for Cognito triggers)
     return event;
@@ -75,6 +92,21 @@ export const handler: PostConfirmationTriggerHandler = async (event: PostConfirm
       region: event.region,
     });
 
+    // Track failure metrics
+    try {
+      await cloudwatch.send(new PutMetricDataCommand({
+        Namespace: 'AcornPups/UserRegistration',
+        MetricData: [{
+          MetricName: 'UserCreationFailure',
+          Value: 1,
+          Unit: 'Count',
+          Timestamp: new Date(),
+        }]
+      }));
+    } catch (metricError) {
+      console.error('Failed to send failure metric:', metricError);
+    }
+
     // Re-throw the error to fail the trigger
     // This will prevent the user from being confirmed if there's an issue
     throw error;
@@ -82,4 +114,4 @@ export const handler: PostConfirmationTriggerHandler = async (event: PostConfirm
 };
 
 // Export for testing
-export { dynamoDb }; 
+export { dynamoDb, cloudwatch }; 

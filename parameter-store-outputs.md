@@ -100,6 +100,10 @@ This stack depends on the following parameter store values from the DB infrastru
 
 ### Lambda Triggers
 - **Post-confirmation**: Automatically creates user record in DynamoDB users table
+  - Uses AWS SDK v3 for improved performance
+  - Publishes CloudWatch metrics for monitoring
+  - Generates secure user IDs with `crypto.randomUUID()`
+  - Sets Pacific timezone as default
 
 ## Security Notes
 

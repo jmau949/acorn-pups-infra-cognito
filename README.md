@@ -78,7 +78,14 @@ This stack depends on the following resources from the DB infrastructure:
 - **Runtime**: Node.js 18.x
 - **Timeout**: 5 seconds
 - **Environment**: `USERS_TABLE_NAME` variable
-- **Permissions**: `dynamodb:PutItem` on users table
+- **Permissions**: 
+  - `dynamodb:PutItem` on users table
+  - `cloudwatch:PutMetricData` for custom metrics
+- **Features**:
+  - AWS SDK v3 for improved performance
+  - Secure user ID generation using `crypto.randomUUID()`
+  - CloudWatch custom metrics for monitoring
+  - Pacific timezone default setting
 
 ## Deployment
 
@@ -174,16 +181,35 @@ acorn-pups-infra-cognito/
 
 The Lambda function automatically creates a user record in DynamoDB when a user confirms their email. The user record includes:
 
-- Unique user ID (generated)
+- Unique user ID (generated using `crypto.randomUUID()`)
 - Email address (from Cognito)
 - Cognito subject ID
 - Full name (from Cognito attributes)
+- Default timezone (Pacific: `America/Los_Angeles`)
 - Default settings (notifications, preferences, etc.)
 - Timestamps (created_at, updated_at)
 
+### CloudWatch Metrics
+
+The Lambda function publishes custom metrics to CloudWatch for monitoring:
+
+- **Namespace**: `AcornPups/UserRegistration`
+- **Metrics**:
+  - `UserCreationSuccess` - Incremented when user record is successfully created
+  - `UserCreationFailure` - Incremented when user record creation fails
+
+### Performance Improvements
+
+- **AWS SDK v3**: Uses the latest AWS SDK for better performance and smaller bundle size
+- **Secure ID Generation**: Uses Node.js `crypto.randomUUID()` for cryptographically secure user IDs
+- **Optimized Date Handling**: ISO date string generated once and reused for consistency
+
 ## Security
 
-- Lambda function has minimal permissions (only `dynamodb:PutItem`)
+- Lambda function has minimal permissions:
+  - `dynamodb:PutItem` on users table only
+  - `cloudwatch:PutMetricData` for monitoring metrics
+- Secure user ID generation using cryptographically secure `randomUUID()`
 - Uses condition expressions to prevent data overwrites
 - All resources are tagged for compliance
 - Production resources use `RETAIN` removal policy
