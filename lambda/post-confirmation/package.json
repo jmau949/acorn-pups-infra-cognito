@@ -1,0 +1,27 @@
+{
+  "name": "acorn-pups-post-confirmation-lambda",
+  "version": "1.0.0",
+  "description": "Post-confirmation Lambda function for Cognito User Pool",
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc",
+    "test": "jest"
+  },
+  "dependencies": {
+    "aws-sdk": "^2.1400.0"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.0",
+    "@types/node": "^22.0.0",
+    "typescript": "~5.0.0"
+  },
+  "keywords": [
+    "aws",
+    "lambda",
+    "cognito",
+    "dynamodb",
+    "acorn-pups"
+  ],
+  "author": "Acorn Pups Team",
+  "license": "MIT"
+} 
