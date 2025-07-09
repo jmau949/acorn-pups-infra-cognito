@@ -57,7 +57,7 @@ async function main() {
   const dbInfo = await getDbTableInfo();
   
   // Stack naming convention
-  const stackPrefix = `acorn-pups-cognito-${environment}`;
+  const stackPrefix = `acorn-pups-${environment}`;
   
   // Cognito Stack
   const cognitoStack = new CognitoStack(app, `${stackPrefix}-cognito`, {

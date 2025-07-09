@@ -88,7 +88,7 @@ export class CognitoStack extends cdk.Stack {
       code: lambda.Code.fromAsset('lambda/post-confirmation'),
       timeout: lambdaConfig.timeout,
       memorySize: props.environment === 'prod' ? 256 : 128, // Environment-specific memory
-      reservedConcurrentExecutions: props.environment === 'prod' ? 20 : 5, // Limit concurrency
+      // Removed reservedConcurrentExecutions to avoid account limits
       environment: {
         USERS_TABLE_NAME: props.usersTableName,
         NODE_ENV: props.environment,
@@ -192,7 +192,7 @@ export class CognitoStack extends cdk.Stack {
       code: lambda.Code.fromAsset('lambda/retry-processor'),
       timeout: cdk.Duration.minutes(props.environment === 'prod' ? 2 : 1), // Optimized timeout
       memorySize: props.environment === 'prod' ? 256 : 128, // Environment-specific memory
-      reservedConcurrentExecutions: props.environment === 'prod' ? 10 : 2, // Limit concurrency
+      // Removed reservedConcurrentExecutions to avoid account limits
       environment: {
         USERS_TABLE_NAME: props.usersTableName,
         NODE_ENV: props.environment,
