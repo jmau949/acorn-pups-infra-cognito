@@ -3,7 +3,6 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { CloudWatchClient, PutMetricDataCommand } from '@aws-sdk/client-cloudwatch';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
-import { randomUUID } from 'crypto';
 
 // Initialize AWS clients
 const dynamoDbClient = new DynamoDBClient({});
@@ -37,8 +36,8 @@ export const handler: PostConfirmationTriggerHandler = async (event: PostConfirm
       return event; // Never fail the trigger
     }
 
-    // Generate user ID using crypto.randomUUID for better uniqueness
-    const userId = `usr_${randomUUID()}`;
+    // Use Cognito Sub directly as user ID (no custom UUID generation)
+    const userId = cognitoSub;
 
     // Generate ISO date string once and reuse
     const currentTimestamp = new Date().toISOString();
@@ -49,7 +48,6 @@ export const handler: PostConfirmationTriggerHandler = async (event: PostConfirm
       SK: 'PROFILE',
       user_id: userId,
       email: userAttributes.email,
-      cognito_sub: cognitoSub,
       full_name: userAttributes.name || userAttributes.email,
       phone: userAttributes.phone_number || null,
       timezone: 'America/Los_Angeles', // Default to Pacific timezone
@@ -137,7 +135,8 @@ async function sendToRetryQueue(
           userName: cognitoSub,
         } = originalEvent;
 
-        const userId = `usr_${randomUUID()}`;
+        // Use Cognito Sub directly as user ID (no custom UUID generation)
+        const userId = cognitoSub;
         const currentTimestamp = new Date().toISOString();
 
         userRecord = {
@@ -145,7 +144,6 @@ async function sendToRetryQueue(
           SK: 'PROFILE',
           user_id: userId,
           email: userAttributes.email,
-          cognito_sub: cognitoSub,
           full_name: userAttributes.name || userAttributes.email,
           phone: userAttributes.phone_number || null,
           timezone: 'America/Los_Angeles',
